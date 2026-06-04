@@ -118,7 +118,9 @@ the diffs to reconcile by hand. Per-file summary:
   `mon_checkpoint_s` and the `if (!cp->silent) { ... }` guard around the per-hit
   event/trace/disassembly block in `mon_breakpoint_check_checkpoint()`.
 - **`src/c64/c64.c`** — call `c64screen_init()` from `machine_specific_init()`.
-- **`src/c64/c64cia1.c`** — `#include "mon_keymatrix.h"` + the
+- **`src/c64/c64cia1.c`** — `#include "mon_keymatrix.h"` (plain, **not**
+  `monitor/mon_keymatrix.h`: the header lives in the submodule and is reached via
+  the `keymatrix/vice` include `apply-wiring.sh` adds to `libc64sc`) + the
   `mon_keymatrix_cia1_pa_read(...)` / `_pb_read(...)` calls in `read_ciapa` /
   `read_ciapb`.
 - **`src/sound.h`** — the custom `dump2` function-pointer field on
@@ -143,3 +145,21 @@ git submodule update --remote src/revice    # bump revice
 `apply-wiring.sh` performs the build wiring (section A) idempotently and applies
 the code-wiring patches in `patches/` if present, reporting anything that needs
 a hand-port.
+
+### Converting an existing fork that already carries the features in-tree
+
+The asid-vice fork already has the feature bodies + code wiring in its own tree.
+To switch it to source them from the submodule instead (so revice is the single
+source of truth):
+
+1. `git submodule add <revice-url> src/revice`
+2. Delete the in-tree feature bodies (now sourced from the submodule):
+   `src/monitor/mon_keymatrix.{c,h}`, `src/monitor/mon_screen.{c,h}`,
+   `src/c64/c64screen.c`, `src/arch/shared/sounddrv/soundasid.c`, and remove
+   their `_SOURCES` lines.
+3. Run `apply-wiring.sh` (adds the submodule sources/includes + `configure.ac`
+   `SOUND_DRIVERS` + patch `06`; patches `01`–`05` report "already applied").
+4. Because `src/monitor/mon_keymatrix.h` is gone, change `c64cia1.c`'s include
+   from `"monitor/mon_keymatrix.h"` to `"mon_keymatrix.h"` (resolved via the
+   `keymatrix/vice` include added to `libc64sc`).
+5. `./autogen.sh && ./configure --with-alsa && make -j`.
