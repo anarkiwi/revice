@@ -57,8 +57,11 @@ libmonitor_a_SOURCES += \\
 	$R/driveattach/src/driveattach_core.c \\
 	$R/checkpoint/src/checkpoint_core.c"
 
+# c64cia1.c (in libc64sc) includes the keymatrix header, so libc64sc needs the
+# keymatrix adapter include dir too — with the header in the submodule it must
+# be reached as "mon_keymatrix.h" (see the c64cia1.c note in README section B).
 wire_makefile "$VICE_ROOT/src/c64/Makefile.am" "\
-AM_CPPFLAGS += -I$R/screen/include -I$R/screen/vice
+AM_CPPFLAGS += -I$R/screen/include -I$R/screen/vice -I$R/keymatrix/vice
 libc64sc_a_SOURCES += $R/screen/vice/c64screen.c"
 
 # ASID sound device. Unlike the monitor features, the ASID driver is built
