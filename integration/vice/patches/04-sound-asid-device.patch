@@ -1,0 +1,44 @@
+diff --git b/src/sound.c a/src/sound.c
+index f089eafd..b84b1701 100644
+--- b/src/sound.c
++++ a/src/sound.c
+@@ -96,6 +96,7 @@ static const sound_register_devices_t sound_register_devices[] = {
+ #endif
+ #ifdef USE_ALSA
+     { "alsa", "ALSA sound output", sound_init_alsa_device, SOUND_PLAYBACK_DEVICE },
++    { "asid", "ASID sound output", sound_init_asid_device, SOUND_PLAYBACK_DEVICE },
+ #endif
+ #ifdef USE_COREAUDIO
+     { "coreaudio", "Mac OS X Audio output", sound_init_coreaudio_device, SOUND_PLAYBACK_DEVICE },
+@@ -1789,7 +1790,9 @@ void sound_store(uint16_t addr, uint8_t val, int chipno)
+ 
+     /* now check if we have a "dump" method (which dumps the details of the
+        write access to a file), and if so, call it */
+-    if (snddata.playdev->dump) {
++    if (snddata.playdev->dump2) {
++        i = snddata.playdev->dump2(maincpu_clk - snddata.wclk, maincpu_clk - maincpu_int_status->irq_clk, maincpu_clk - maincpu_int_status->nmi_clk, chipno, addr, val);
++    } else if (snddata.playdev->dump) {
+         i = snddata.playdev->dump(addr, val, maincpu_clk - snddata.wclk);
+     } else {
+         return;
+diff --git b/src/sound.h a/src/sound.h
+index b49464f8..5ba3d47d 100644
+--- b/src/sound.h
++++ a/src/sound.h
+@@ -190,6 +190,8 @@ typedef struct sound_device_s {
+     int (*write)(int16_t *pbuf, size_t nr);
+     /* dump-routine to be called for every write to SID */
+     int (*dump)(uint16_t addr, uint8_t byte, CLOCK clks);
++    /* dump-routine to be called for every write to SID */
++    int (*dump2)(CLOCK clks, CLOCK irq_clks, CLOCK nmi_clks, uint8_t chipno, uint16_t addr, uint8_t byte);
+     /* DEPRECATED: flush-routine to be called every frame (not called anywhere) */
+     int (*deprecated_flush)(char *state);
+     int (*bufferspace)(void);
+@@ -266,6 +268,7 @@ int sound_cmdline_options_init(void);
+ 
+ /* device initialization prototypes */
+ int sound_init_alsa_device(void);
++int sound_init_asid_device(void);
+ int sound_init_dummy_device(void);
+ int sound_init_dump_device(void);
+ int sound_init_fs_device(void);

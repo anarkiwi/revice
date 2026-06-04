@@ -1,0 +1,15 @@
+# CMake / build output
+/build/
+build*/
+*.o
+*.a
+*.so
+*.dylib
+
+# Editor / OS cruft
+*.swp
+.DS_Store
+
+# Python bytecode
+__pycache__/
+*.pyc

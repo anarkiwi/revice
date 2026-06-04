@@ -1,0 +1,80 @@
+commit 57b4055a56ff0e5376d04bea8df2080d6cf54819
+Author: Josh Bailey <josh@vandervecken.com>
+Date:   Sat May 9 23:54:16 2026 +0000
+
+    Add monitor commands for keyboard injection and screen scraping
+    
+    New `keymatrix` command pokes the C64 keyboard matrix directly so any
+    program (including direct CIA1 scanners) sees the input; releases the
+    key the moment the program is observed reading the matrix rather than
+    guessing a hold duration. New `screenscrape` command emits VIC-II
+    state plus screen RAM, color RAM, and the active charset in one shot
+    so an external app can read the display without OCR. Both are
+    accessible from the text monitor and as binary-monitor opcodes
+    0x74-0x77.
+    
+    A new Dockerfile + .dockerignore build a slim headless image for
+    driving the emulator from another application over the binmon port.
+    
+    Run `./autogen.sh && ./configure --with-alsa && make -j` (or
+    `docker build .`) after clone — autogen regenerates Makefile.in,
+    mon_lex.c and mon_parse.{c,h} from the .am/.l/.y sources in this
+    commit, so they are intentionally not duplicated here.
+    
+    Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/c64/c64.c b/src/c64/c64.c
+index d1d58768..4800b5ec 100644
+--- a/src/c64/c64.c
++++ b/src/c64/c64.c
+@@ -1169,6 +1169,14 @@ int machine_specific_init(void)
+ 
+     machine_drive_stub();
+ 
++    /* Register the C64 screen-state provider with the monitor. Lets
++       the binmon SCREEN_GET / text-monitor `screen` commands return
++       VIC-II state, screen RAM, color RAM, and the active charset. */
++    {
++        extern void c64screen_init(void);
++        c64screen_init();
++    }
++
+     DBG(("machine_specific_init (done)"));
+ 
+     return 0;
+diff --git a/src/c64/c64cia1.c b/src/c64/c64cia1.c
+index 70f22490..627490f5 100644
+--- a/src/c64/c64cia1.c
++++ b/src/c64/c64cia1.c
+@@ -47,6 +47,7 @@
+ #include "log.h"
+ #include "machine.h"
+ #include "maincpu.h"
++#include "monitor/mon_keymatrix.h"
+ #include "types.h"
+ #include "userport.h"
+ #include "vicii.h"
+@@ -338,6 +339,12 @@ static uint8_t read_ciapa(cia_context_t *cia_context)
+ 
+     DBGA((" out:%02x\n", byte));
+ 
++    /* Notify the monitor's keymatrix injector of this PA read so it can
++       count CIA1 reads that sampled an injected bit. The hook short-
++       circuits when no injection is active. The mask passed is the same
++       PB-driven row mask the function uses above (active rows = bit 0). */
++    mon_keymatrix_cia1_pa_read(cia_context->old_pb & read_joyport_dig(JOYPORT_1));
++
+     return byte;
+ }
+ 
+@@ -430,6 +437,10 @@ static uint8_t read_ciapb(cia_context_t *cia_context)
+ 
+     DBGB((" out:%02x\n", byte));
+ 
++    /* Notify the monitor's keymatrix injector of this PB read. The mask
++       is the PA-driven column mask (active cols = bit 0). */
++    mon_keymatrix_cia1_pb_read(cia_context->old_pa & read_joyport_dig(JOYPORT_2));
++
+     return byte;
+ }
+ 
