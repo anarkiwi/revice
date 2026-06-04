@@ -113,6 +113,30 @@ static void test_update_reg_short_form_msb(void)
     CHECK_MEM(cap.msg[0].bytes, expect_short, sizeof(expect_short));
 }
 
+/* Short form emits in regmap order: control registers (4/11/18) come last so
+   a voice's freq/PW/ADSR are applied before its gate edge, matching the
+   standard update form. */
+static void test_update_reg_control_last(void)
+{
+    asid_core_t core;
+    capture_t cap = {0};
+    asid_core_init(&core, 1);
+    /* Write the control register first, then an envelope register; the short
+       form must still place the control register after the envelope. */
+    asid_core_set_reg(&core, 0, 4, 0x21, cap_emit, &cap);  /* v1 control/gate */
+    asid_core_set_reg(&core, 0, 5, 0x11, cap_emit, &cap);  /* v1 attack/decay */
+    asid_core_flush(&core, 0, 0, cap_emit, &cap);
+    CHECK_EQ_INT(cap.count, 1);
+    /* f0 2d 6c | (5,0x11) (4,0x21) | f7 */
+    CHECK_EQ_INT(cap.msg[0].len, 8);
+    CHECK_EQ_INT(cap.msg[0].bytes[2], 0x6c);
+    CHECK_EQ_INT(cap.msg[0].bytes[3], 5);      /* envelope reg first */
+    CHECK_EQ_INT(cap.msg[0].bytes[4], 0x11);
+    CHECK_EQ_INT(cap.msg[0].bytes[5], 4);      /* control reg last */
+    CHECK_EQ_INT(cap.msg[0].bytes[6], 0x21);
+    CHECK_EQ_INT(cap.msg[0].bytes[7], 0xf7);
+}
+
 /* regmask clamps each register to its writable bits before anything else. */
 static void test_regmask_clamps(void)
 {
@@ -235,6 +259,7 @@ int main(void)
     test_standard_update_msb();
     test_update_reg_short_form();
     test_update_reg_short_form_msb();
+    test_update_reg_control_last();
     test_regmask_clamps();
     test_noop_write_ignored();
     test_control_register_forces_flush();
