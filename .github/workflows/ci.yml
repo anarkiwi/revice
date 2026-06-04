@@ -45,6 +45,7 @@ jobs:
             autoconf automake build-essential byacc dos2unix flex \
             libasound2-dev libglib2.0-dev libpng-dev libpulse-dev \
             libsdl2-dev libsdl2-image-dev libevdev-dev libglew-dev \
+            libcurl4-openssl-dev libbsd-dev libpci-dev libnet1-dev zlib1g-dev \
             texinfo xa65 pkg-config
       - name: wire revice into the fork
         working-directory: asid-vice
