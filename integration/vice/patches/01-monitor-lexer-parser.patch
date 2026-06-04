@@ -1,0 +1,169 @@
+commit 57b4055a56ff0e5376d04bea8df2080d6cf54819
+Author: Josh Bailey <josh@vandervecken.com>
+Date:   Sat May 9 23:54:16 2026 +0000
+
+    Add monitor commands for keyboard injection and screen scraping
+    
+    New `keymatrix` command pokes the C64 keyboard matrix directly so any
+    program (including direct CIA1 scanners) sees the input; releases the
+    key the moment the program is observed reading the matrix rather than
+    guessing a hold duration. New `screenscrape` command emits VIC-II
+    state plus screen RAM, color RAM, and the active charset in one shot
+    so an external app can read the display without OCR. Both are
+    accessible from the text monitor and as binary-monitor opcodes
+    0x74-0x77.
+    
+    A new Dockerfile + .dockerignore build a slim headless image for
+    driving the emulator from another application over the binmon port.
+    
+    Run `./autogen.sh && ./configure --with-alsa && make -j` (or
+    `docker build .`) after clone — autogen regenerates Makefile.in,
+    mon_lex.c and mon_parse.{c,h} from the .am/.l/.y sources in this
+    commit, so they are intentionally not duplicated here.
+    
+    Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/monitor/mon_command.c b/src/monitor/mon_command.c
+index a7d385e1..5f769096 100644
+--- a/src/monitor/mon_command.c
++++ b/src/monitor/mon_command.c
+@@ -301,6 +301,48 @@ static const mon_cmds_t mon_cmd_array[] = {
+       NO_FILENAME_ARG
+     },
+ 
++    { "screenscrape", "scrscr",
++      "[raw]",
++      "Emit the current C64 screen state in a form an external app can"
++      " consume: VIC-II video mode, the screen RAM at the live screen pointer"
++      " (D018 + VIC bank), the color RAM, and the active 2 KiB character set"
++      " (from chargen ROM or RAM, with metadata indicating which). The text"
++      " monitor renders a 40x25 ASCII grid by default; pass `raw` for a hex"
++      " dump of screen RAM. The same data is available efficiently as a"
++      " single-shot binary read via the binmon SCREEN_GET (0x77) opcode.\n"
++      "C64 only.",
++      NO_FILENAME_ARG
++    },
++
++    { "keymatrix", "",
++      "tap|press|release|poke|show|names ...",
++      "Inject keypresses directly into the C64 keyboard matrix (the layer the"
++      " CIA1 reads), so programs that scan the matrix without using KERNAL"
++      " routines still see them. Sub-commands:\n"
++      "  keymatrix tap <key>... [for <frames>]\n"
++      "        Press the listed keys (chord) and release as soon as the\n"
++      "        program reads CIA1 in a way that sampled an injected bit;\n"
++      "        if no such read happens, release after a safety timeout (60\n"
++      "        frames default; override with `for <frames>` for a fixed\n"
++      "        duration that ignores observation).\n"
++      "  keymatrix press <key>...\n"
++      "        Sticky press; bits stay set until you `keymatrix release`.\n"
++      "  keymatrix release [<key>...]\n"
++      "        Release listed keys, or every matrix bit if no keys given.\n"
++      "  keymatrix poke <row> <col> <0|1>\n"
++      "        Raw matrix-bit poke (escape hatch for unmapped keys or for\n"
++      "        non-C64 machines).\n"
++      "  keymatrix show\n"
++      "        Print the live matrix and the last/current tap report\n"
++      "        (CIA1 read counts, what released, after how many frames).\n"
++      "  keymatrix names\n"
++      "        List the recognised C64 key names (case-insensitive).\n"
++      "Keys can be symbolic (A, F1, LSHIFT, RUNSTOP, RESTORE, ...) or a\n"
++      "raw `<row>,<col>` pair like 7,7. Combine for chords:\n"
++      "  keymatrix tap lshift a",
++      NO_FILENAME_ARG
++    },
++
+     { "warp", "",
+       "[on|off|toggle]",
+       "Turn warp mode on or off. If the argument is 'toggle' then the current mode"
+diff --git a/src/monitor/mon_lex.l b/src/monitor/mon_lex.l
+index a9b9e3ca..eccfcad7 100644
+--- a/src/monitor/mon_lex.l
++++ b/src/monitor/mon_lex.l
+@@ -128,7 +128,7 @@ send:
+ 
+ HDIGIT  [0-9a-f]
+ 
+-%x FNAME CMD STR ROL ROLQ ASM_MODE COND_MODE REG_ASGN LABEL_ASGN BNAME CTYPE RADIX
++%x FNAME CMD STR ROL ROLQ ASM_MODE COND_MODE REG_ASGN LABEL_ASGN BNAME CTYPE RADIX KMX_VERB
+ 
+ %%
+ 
+@@ -194,6 +194,7 @@ HDIGIT  [0-9a-f]
+         io              { BEGIN(INITIAL);       return CMD_IO; }
+         jpdb            { BEGIN(INITIAL);       return CMD_JPDB; }
+         keybuf          { BEGIN(ROL);           return CMD_KEYBUF; }
++        keymatrix       { BEGIN(KMX_VERB);      return CMD_KEYMATRIX; }
+         list            { BEGIN(INITIAL);       return CMD_LIST; }
+         load|l          { BEGIN(FNAME);         return CMD_LOAD; }
+         loadbasic|ldb   { BEGIN(FNAME);         return CMD_BASICLOAD; }
+@@ -227,6 +228,7 @@ HDIGIT  [0-9a-f]
+         save|s          { BEGIN(FNAME);         return CMD_SAVE; }
+         save_labels|sl  { BEGIN(FNAME);         return CMD_SAVE_LABELS; }
+         screen|sc       { BEGIN(INITIAL);       return CMD_SCREEN; }
++        screenscrape|scrscr { BEGIN(ROL);       return CMD_SCREENSCRAPE; }
+         screenshot|scrsh { BEGIN(FNAME);        return CMD_SCREENSHOT; }
+         show_labels|shl { BEGIN(INITIAL);       return CMD_SHOW_LABELS; }
+         sidefx|sfx      { BEGIN(INITIAL);       return CMD_SIDEFX; }
+@@ -254,6 +256,18 @@ HDIGIT  [0-9a-f]
+             }
+         maincpu_trace   { BEGIN(INITIAL);       return CMD_MAINCPU_TRACE; }
+ }
++
++ /* sub-verbs for the `keymatrix` command. Their argument tail (if any) is
++    captured as a rest-of-line token and parsed by mon_keymatrix.c. */
++<KMX_VERB>{
++        tap     { BEGIN(ROL);     return KMX_TAP; }
++        press   { BEGIN(ROL);     return KMX_PRESS; }
++        release { BEGIN(ROL);     return KMX_RELEASE; }
++        poke    { BEGIN(ROL);     return KMX_POKE; }
++        show    { BEGIN(INITIAL); return KMX_SHOW; }
++        names   { BEGIN(INITIAL); return KMX_NAMES; }
++}
++
+  /* this is not a real command, but could be a label name for a label assignment */
+ <CMD>[_a-zA-Z][_a-zA-Z0-9]* { BEGIN(LABEL_ASGN); yylval.str = lib_strdup(yytext); return CMD_LABEL_ASGN; }
+ 
+diff --git a/src/monitor/mon_parse.y b/src/monitor/mon_parse.y
+index 77ed59f7..adc4152c 100644
+--- a/src/monitor/mon_parse.y
++++ b/src/monitor/mon_parse.y
+@@ -58,6 +58,8 @@ char *alloca();
+ #include "mon_disassemble.h"
+ #include "mon_drive.h"
+ #include "mon_file.h"
++#include "mon_keymatrix.h"
++#include "mon_screen.h"
+ #include "mon_memmap.h"
+ #include "mon_memory.h"
+ #include "mon_register.h"
+@@ -147,6 +149,8 @@ void set_yydebug(int val);
+ %token CMD_LOAD_LABELS CMD_SAVE_LABELS CMD_ADD_LABEL CMD_DEL_LABEL CMD_SHOW_LABELS CMD_CLEAR_LABELS
+ %token CMD_RECORD CMD_MON_STOP CMD_PLAYBACK CMD_CHAR_DISPLAY CMD_SPRITE_DISPLAY
+ %token CMD_TEXT_DISPLAY CMD_SCREENCODE_DISPLAY CMD_ENTER_DATA CMD_ENTER_BIN_DATA CMD_KEYBUF
++%token CMD_KEYMATRIX KMX_TAP KMX_PRESS KMX_RELEASE KMX_POKE KMX_SHOW KMX_NAMES
++%token CMD_SCREENSCRAPE
+ %token CMD_BLOAD CMD_BSAVE CMD_SCREEN CMD_UNTIL CMD_CPU CMD_YYDEBUG
+ %token CMD_BACKTRACE CMD_SCREENSHOT CMD_PWD CMD_DIR CMD_MKDIR CMD_RMDIR
+ %token CMD_RESOURCE_GET CMD_RESOURCE_SET CMD_LOAD_RESOURCES CMD_SAVE_RESOURCES
+@@ -559,6 +563,20 @@ monitor_misc_rules: CMD_DISK rest_of_line end_cmd
+                     { mon_change_dir($2); }
+                   | CMD_KEYBUF rest_of_line end_cmd /* STRING */
+                     { mon_keyboard_feed($2); }
++                  | CMD_KEYMATRIX KMX_TAP opt_rest_of_line end_cmd
++                    { mon_keymatrix_tap($3); if ($3) lib_free($3); }
++                  | CMD_KEYMATRIX KMX_PRESS opt_rest_of_line end_cmd
++                    { mon_keymatrix_press($3); if ($3) lib_free($3); }
++                  | CMD_KEYMATRIX KMX_RELEASE opt_rest_of_line end_cmd
++                    { mon_keymatrix_release($3); if ($3) lib_free($3); }
++                  | CMD_KEYMATRIX KMX_POKE opt_rest_of_line end_cmd
++                    { mon_keymatrix_poke($3); if ($3) lib_free($3); }
++                  | CMD_KEYMATRIX KMX_SHOW end_cmd
++                    { mon_keymatrix_show(); }
++                  | CMD_KEYMATRIX KMX_NAMES end_cmd
++                    { mon_keymatrix_names(); }
++                  | CMD_SCREENSCRAPE opt_rest_of_line end_cmd
++                    { mon_screen_show($2); if ($2) lib_free($2); }
+                   | CMD_BACKTRACE end_cmd
+                     { mon_backtrace(); }
+                   | CMD_DIR opt_rest_of_line end_cmd

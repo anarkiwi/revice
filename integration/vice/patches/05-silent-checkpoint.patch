@@ -1,0 +1,153 @@
+commit 8aeba46864461a3de5151c1e93d044997cdd5b85
+Author: Josh Bailey <josh@vandervecken.com>
+Date:   Mon May 11 23:56:57 2026 +0000
+
+    binmon: add silent-checkpoint flag for byte-granular polled coverage
+    
+    Adds a per-checkpoint `silent` flag exposed through CHECKPOINT_SET body
+    byte 9 (optional, backward-compatible — length-9 bodies leave silent=false).
+    When set, the on-hit handler increments hit_count but skips the
+    unsolicited CHECKPOINT_INFO event, trace prints, disassembly, and command
+    execution.
+    
+    Motivation: polled-coverage harvesters (defmon-src installs ~45K
+    stop_when_hit=false watchpoints over the code band) only need cumulative
+    hit_count, which they read via checkpoint_list. Under the un-patched
+    binmon, every hit emits an event; warp playback produces ~10^7 events/s,
+    bottlenecking VICE itself on event emission (sweep wall 8.5 min →
+    134 min) and wedging the binmon pipeline behind a multi-million-event
+    queue (stop_playback etc. time out post-warp).
+    
+    A/B benchmark (4096 cps × 10 s warp playback): silent mode emits 0
+    events, registers 440K hit_count (vs 190K loud), no command timeout.
+    Same 607 distinct cps hit — coverage attribution unchanged.
+    
+    Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/monitor/mon_breakpoint.c b/src/monitor/mon_breakpoint.c
+index a8d2bd4b..62102b14 100644
+--- a/src/monitor/mon_breakpoint.c
++++ b/src/monitor/mon_breakpoint.c
+@@ -555,8 +555,6 @@ bool mon_breakpoint_check_checkpoint(MEMSPACE mem, unsigned int addr, unsigned i
+ 
+             cp->hit_count++;
+ 
+-            mon_breakpoint_event(cp);
+-
+             if (cp->stop) {
+                 must_stop = TRUE;
+                 action_str = "Stop on";
+@@ -564,42 +562,52 @@ bool mon_breakpoint_check_checkpoint(MEMSPACE mem, unsigned int addr, unsigned i
+                 action_str = "Trace";
+             }
+ 
+-            mon_out("#%d (%s %5s %04x) ", cp->checknum, action_str, op_str, addr);
+-
+-            if (mon_interfaces[mem]->get_line_cycle != NULL) {
+-                unsigned int line, cycle;
+-                int half_cycle;
+-
+-                mon_interfaces[mem]->get_line_cycle(&line, &cycle, &half_cycle);
+-
+-                if (half_cycle == -1) {
+-                    mon_out(" %3u/$%03x, %3u/$%02x\n",
+-                            line, line, cycle, cycle);
++            /* asid-vice extension: silent checkpoints skip all per-hit
++             * output work (binmon event, trace print, disassembly).
++             * Only hit_count + the stop/temporary bookkeeping above and
++             * below this block runs. This is the line that pays for
++             * itself ~10^7 times per second under byte-granular
++             * coverage + warp playback. */
++            if (!cp->silent) {
++                mon_breakpoint_event(cp);
++
++                mon_out("#%d (%s %5s %04x) ", cp->checknum, action_str, op_str, addr);
++
++                if (mon_interfaces[mem]->get_line_cycle != NULL) {
++                    unsigned int line, cycle;
++                    int half_cycle;
++
++                    mon_interfaces[mem]->get_line_cycle(&line, &cycle, &half_cycle);
++
++                    if (half_cycle == -1) {
++                        mon_out(" %3u/$%03x, %3u/$%02x\n",
++                                line, line, cycle, cycle);
++                    } else {
++                        mon_out(" %3u/$%03x, %3u/$%02x %i\n",
++                                line, line, cycle, cycle, half_cycle);
++                    }
+                 } else {
+-                    mon_out(" %3u/$%03x, %3u/$%02x %i\n",
+-                            line, line, cycle, cycle, half_cycle);
++                    mon_out("\n");
+                 }
+-            } else {
+-                mon_out("\n");
+-            }
+ 
+-            /* always disassemble using CPU bank */
+-            if (mon_interfaces[mem]->mem_bank_from_name != NULL) {
+-                mon_interfaces[mem]->current_bank = mon_interfaces[mem]->mem_bank_from_name("cpu");
+-            } else {
+-                mon_interfaces[mem]->current_bank = 0;
+-            }
++                /* always disassemble using CPU bank */
++                if (mon_interfaces[mem]->mem_bank_from_name != NULL) {
++                    mon_interfaces[mem]->current_bank = mon_interfaces[mem]->mem_bank_from_name("cpu");
++                } else {
++                    mon_interfaces[mem]->current_bank = 0;
++                }
+ 
+-            if (is_loadstore) {
+-                mon_disassemble_with_regdump(mem, loadstorepc);
+-            } else if (!is_loadstore || cp->stop) {
+-                mon_disassemble_with_regdump(mem, instpc);
+-            }
+-            mon_interfaces[mem]->current_bank = monbank; /* restore value used in monitor */
++                if (is_loadstore) {
++                    mon_disassemble_with_regdump(mem, loadstorepc);
++                } else if (!is_loadstore || cp->stop) {
++                    mon_disassemble_with_regdump(mem, instpc);
++                }
++                mon_interfaces[mem]->current_bank = monbank; /* restore value used in monitor */
+ 
+-            if (cp->command) {
+-                mon_out("Executing: %s\n", cp->command);
+-                parse_and_execute_line(cp->command);
++                if (cp->command) {
++                    mon_out("Executing: %s\n", cp->command);
++                    parse_and_execute_line(cp->command);
++                }
+             }
+ 
+             if (cp->temporary) {
+@@ -673,6 +681,10 @@ int breakpoint_add_checkpoint(MON_ADDR start_addr, MON_ADDR end_addr,
+     new_cp->check_store = memory_op & e_store;
+     new_cp->check_exec = memory_op & e_exec;
+     new_cp->temporary = is_temp;
++    /* Default: emit per-hit event/print. binmon CHECKPOINT_SET handler
++     * can override this after creation when its extended body opts in
++     * (see monitor_binary_process_checkpoint_set). */
++    new_cp->silent = false;
+ 
+     mem = addr_memspace(start_addr);
+     add_to_checkpoint_list(&all_checkpoints, new_cp);
+diff --git a/src/monitor/mon_breakpoint.h b/src/monitor/mon_breakpoint.h
+index d6ea9d69..a5305c82 100644
+--- a/src/monitor/mon_breakpoint.h
++++ b/src/monitor/mon_breakpoint.h
+@@ -49,6 +49,14 @@ struct mon_checkpoint_s {
+     bool check_store;
+     bool check_exec;
+     bool temporary;
++    /* asid-vice extension: when true, the on-hit handler increments
++     * hit_count but skips the per-hit binmon event, trace print, and
++     * disassembly. Cheap polled-coverage mode for stop_when_hit=false
++     * watchpoints over large ranges (~45K cps in defmon-src) — avoids
++     * the ~10^7 events/s flood that otherwise wedges the binmon
++     * pipeline under warp playback. Default false; only set via the
++     * extended CHECKPOINT_SET body byte 9. */
++    bool silent;
+ };
+ typedef struct mon_checkpoint_s mon_checkpoint_t;
+ 

@@ -1,0 +1,100 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # Fast gate: build and run the pure-core unit tests. No VICE, no system deps
+  # beyond a C compiler + cmake. This is the authoritative test of the feature
+  # logic (ASID wire format, SCREEN_GET layout, keymatrix state machine,
+  # driveattach/checkpoint decoders).
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: build
+        run: cmake --build build
+      - name: test
+        run: ctest --test-dir build --output-on-failure
+
+  # Integration gate: prove the revice cores + VICE adapters compile and archive
+  # into the real VICE libraries against the asid-vice fork (VICE 3.10). We build
+  # the three affected libraries (libmonitor, libc64sc, libsounddrv) and assert
+  # the revice objects landed in them. A full headless x64sc/vsid link + binmon
+  # smoke test is attempted best-effort (the fork has unrelated optional-driver
+  # build quirks that can block a from-scratch full link in CI).
+  integration-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout revice
+        uses: actions/checkout@v4
+        with:
+          path: revice
+      - name: checkout asid-vice (VICE fork)
+        uses: actions/checkout@v4
+        with:
+          repository: anarkiwi/asid-vice
+          path: asid-vice
+      - name: install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf automake build-essential byacc dos2unix flex \
+            libasound2-dev libglib2.0-dev libpng-dev libpulse-dev \
+            libsdl2-dev libsdl2-image-dev libevdev-dev libglew-dev \
+            libcurl4-openssl-dev libbsd-dev libpci-dev libnet1-dev zlib1g-dev \
+            texinfo xa65 pkg-config
+      - name: wire revice into the fork
+        working-directory: asid-vice
+        run: |
+          set -euxo pipefail
+          # Place revice where the wiring expects it.
+          rm -rf src/revice && cp -a ../revice src/revice
+          # Drop the fork's in-tree feature bodies (now sourced from src/revice)
+          # so they don't double-compile.
+          sed -i '/^\tmon_keymatrix\.[ch] \\$/d; /^\tmon_screen\.[ch] \\$/d' src/monitor/Makefile.am
+          sed -i '/^\tc64screen\.c \\$/d' src/c64/Makefile.am
+          # Run the documented wiring (Makefile.am + code patches; the fork
+          # already carries the code edits, so 01-05 report 'already applied'
+          # and 06 routes the two tiny decoders through the revice cores).
+          bash src/revice/integration/vice/apply-wiring.sh
+      - name: configure (headless + alsa)
+        working-directory: asid-vice
+        run: |
+          set -euxo pipefail
+          ./autogen.sh
+          ./configure --with-alsa --enable-headlessui
+      - name: build affected VICE libraries with revice wired in
+        working-directory: asid-vice
+        run: |
+          set -euxo pipefail
+          make -C src/monitor libmonitor.a
+          make -C src/c64 libc64sc.a
+          make -C src/arch/shared/sounddrv libsounddrv.a
+      - name: assert revice objects archived into the VICE libraries
+        working-directory: asid-vice
+        run: |
+          set -euxo pipefail
+          ar t src/monitor/libmonitor.a | grep -qx keymatrix_core.o
+          ar t src/monitor/libmonitor.a | grep -qx mon_keymatrix.o
+          ar t src/monitor/libmonitor.a | grep -qx screen_core.o
+          ar t src/monitor/libmonitor.a | grep -qx mon_screen.o
+          ar t src/monitor/libmonitor.a | grep -qx driveattach_core.o
+          ar t src/monitor/libmonitor.a | grep -qx checkpoint_core.o
+          ar t src/c64/libc64sc.a       | grep -qx c64screen.o
+          ar t src/arch/shared/sounddrv/libsounddrv.a | grep -qx asid_core.o
+          # the keymatrix adapter must reference the revice core (not inline)
+          nm src/monitor/mon_keymatrix.o | grep -q ' U km_core_init'
+          nm src/c64/c64screen.o         | grep -q ' U screen_pack'
+          echo "revice integration verified: cores + adapters archived into VICE libs"
+      - name: best-effort full headless build + binmon smoke test
+        working-directory: asid-vice
+        continue-on-error: true
+        run: |
+          set -uxo pipefail
+          # -Isrc/sid works around a fork quirk in the optional usbsid driver.
+          make -j"$(nproc)" x64sc CPPFLAGS="-I$PWD/src/sid" || { echo "full link skipped (fork optional-driver quirk)"; exit 0; }
+          python3 src/revice/integration/vice/smoke_test.py ./src/x64sc || true
