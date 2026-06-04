@@ -51,6 +51,8 @@ extern "C" {
 /* Timing helpers (used by the realtime flush scheduler in the adapter). */
 #define ASID_CYCLE_PAD            20000u
 #define ASID_IRQ_FLUSH_THRESHOLD  256u
+/* PAL C64 CPU clock (17.734475 MHz / 18), used as a fallback only. */
+#define ASID_PAL_CYCLES_PER_SEC   985248u
 
 /* Pre-built fixed SysEx messages (start/stop the ASID session). */
 extern const uint8_t asid_core_start_msg[4];
@@ -98,9 +100,11 @@ void asid_core_set_reg(asid_core_t *core, uint8_t chip, uint8_t reg,
 void asid_core_flush(asid_core_t *core, uint8_t chip, uint64_t nsec,
                      asid_emit_fn emit, void *ctx);
 
-/* Convert an emulator cycle count to nanoseconds, assuming PAL timing
-   (matches the fork's clock_to_nanos()). */
-uint64_t asid_clock_to_nanos(uint64_t clock);
+/* Convert an emulator cycle count to nanoseconds for the given CPU clock rate
+   (cycles per second). Pass machine_get_cycles_per_second() so the MIDI flush
+   scheduling is correct on PAL, NTSC and Drean alike; a cycles_per_sec of 0
+   falls back to PAL (ASID_PAL_CYCLES_PER_SEC). */
+uint64_t asid_clock_to_nanos(uint64_t clock, uint64_t cycles_per_sec);
 
 /* True when the IRQ delta since the last flush is large enough that the
    previous IRQ's register writes should be flushed (irq_diff > threshold). */

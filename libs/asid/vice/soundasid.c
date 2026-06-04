@@ -28,6 +28,7 @@
 #include "vice.h"
 
 #include "interrupt.h"
+#include "machine.h"
 #include "maincpu.h"
 
 #include "sound.h"
@@ -343,7 +344,8 @@ static int asid_dump2(CLOCK clks, CLOCK irq_clks, CLOCK nmi_clks,
       asid_timing[chipno].start_clock = now;
     }
     asid_timing[chipno].last_irq = irq_clk;
-    n = (int64_t)asid_clock_to_nanos(irq_clk + ASID_CYCLE_PAD) -
+    n = (int64_t)asid_clock_to_nanos(irq_clk + ASID_CYCLE_PAD,
+                                     (uint64_t)machine_get_cycles_per_second()) -
         (int64_t)(now - asid_timing[chipno].start_clock);
     if (n < 0) {
       float slip_ms = labs(n) / 1e6;

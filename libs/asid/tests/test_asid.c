@@ -218,8 +218,15 @@ static void test_timing_helpers(void)
     CHECK(asid_should_flush_on_irq(1000, 0));         /* diff 1000 > 256 */
     CHECK(!asid_should_flush_on_irq(100, 0));         /* diff 100  <= 256 */
     CHECK(!asid_should_flush_on_irq(256, 0));         /* boundary: not > */
-    CHECK_EQ_INT(asid_clock_to_nanos(0), 0);
-    CHECK(asid_clock_to_nanos(1000000) > 0);
+
+    /* clock_to_nanos uses the machine clock: cycles_per_sec cycles == 1s. */
+    CHECK_EQ_INT(asid_clock_to_nanos(0, 985248), 0);
+    CHECK_EQ_INT(asid_clock_to_nanos(985248, 985248), 1000000000ULL);   /* PAL  */
+    CHECK_EQ_INT(asid_clock_to_nanos(1022727, 1022727), 1000000000ULL); /* NTSC */
+    /* NTSC cycles are shorter, so a fixed cycle count is fewer ns on NTSC. */
+    CHECK(asid_clock_to_nanos(100000, 1022727) < asid_clock_to_nanos(100000, 985248));
+    /* cycles_per_sec == 0 falls back to PAL. */
+    CHECK_EQ_INT(asid_clock_to_nanos(985248, 0), asid_clock_to_nanos(985248, 985248));
 }
 
 int main(void)

@@ -157,9 +157,12 @@ void asid_core_set_reg(asid_core_t *core, uint8_t chip, uint8_t reg,
     state->sid_modified_flag = 1;
 }
 
-uint64_t asid_clock_to_nanos(uint64_t clock)
+uint64_t asid_clock_to_nanos(uint64_t clock, uint64_t cycles_per_sec)
 {
-    return (uint64_t)((double)clock / (17.734475 / 18 * 1e6) * 1e9);
+    if (cycles_per_sec == 0) {
+        cycles_per_sec = ASID_PAL_CYCLES_PER_SEC;
+    }
+    return (uint64_t)((double)clock / (double)cycles_per_sec * 1e9);
 }
 
 int asid_should_flush_on_irq(uint64_t irq_clk, uint64_t last_irq)
