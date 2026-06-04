@@ -80,20 +80,24 @@ void asid_core_flush(asid_core_t *core, uint8_t chip, uint64_t nsec,
     }
 
     /* Per-register ("update reg") form: pairs of (reg, value), MSB folded
-       into bit 6 of the register byte. */
+       into bit 6 of the register byte. Emitted in regmap order so the control
+       registers (4/11/18) come last, exactly like the standard update form —
+       the receiver applies each pair in order, so a voice's freq/PW/ADSR are
+       set before its gate edge. */
     t = sizeof(asid_prefix) + 1;
     for (i = 0; i < ASID_NUM_REGS; ++i) {
-        uint8_t reg;
+        uint8_t reg = regmap[i];
+        uint8_t enc;
         uint8_t val;
-        if (!state->sid_modified[i]) {
+        if (!state->sid_modified[reg]) {
             continue;
         }
-        reg = i;
         val = state->sid_register[reg];
+        enc = reg;
         if (val > 0x7f) {
-            reg |= (1 << 6);
+            enc |= (1 << 6);
         }
-        state->update_reg_buffer[t++] = reg;
+        state->update_reg_buffer[t++] = enc;
         state->update_reg_buffer[t++] = val & 0x7f;
     }
     state->update_reg_buffer[t++] = ASID_SYSEX_STOP;
@@ -157,9 +161,12 @@ void asid_core_set_reg(asid_core_t *core, uint8_t chip, uint8_t reg,
     state->sid_modified_flag = 1;
 }
 
-uint64_t asid_clock_to_nanos(uint64_t clock)
+uint64_t asid_clock_to_nanos(uint64_t clock, uint64_t cycles_per_sec)
 {
-    return (uint64_t)((double)clock / (17.734475 / 18 * 1e6) * 1e9);
+    if (cycles_per_sec == 0) {
+        cycles_per_sec = ASID_PAL_CYCLES_PER_SEC;
+    }
+    return (uint64_t)((double)clock / (double)cycles_per_sec * 1e9);
 }
 
 int asid_should_flush_on_irq(uint64_t irq_clk, uint64_t last_irq)
