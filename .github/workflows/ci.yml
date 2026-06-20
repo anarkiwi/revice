@@ -12,7 +12,7 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
       - name: build
@@ -30,11 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout revice
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: revice
       - name: checkout asid-vice (VICE fork)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: anarkiwi/asid-vice
           path: asid-vice
