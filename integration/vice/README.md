@@ -93,10 +93,13 @@ holds them as diffs against VICE 3.10 (the asid-vice fork's base):
 | `04-sound-asid-device.patch` | `sound.h`, `sound.c` | `dump2` field, prototype, device-table row, call-site |
 | `05-silent-checkpoint.patch` | `mon_breakpoint.c/.h` | `silent` field + the on-hit guard |
 | `06-binmon-route-through-revice-cores.patch` | `monitor_binary.c` | route DRIVE_ATTACH/checkpoint through the revice cores (apply after `03`) |
+| `07-log-file-close-use-after-free.patch` | `log.c` | upstream VICE bugfix: flush before close in `log_file_close()` (fixes a use-after-free that intermittently crashes vsid) |
 
 Patches `01`–`05` are exactly the fork's feature additions, so they apply to a
 pristine VICE 3.10 tree; `06` applies on top of `03`. When VICE moves, these are
-the diffs to reconcile by hand. Per-file summary:
+the diffs to reconcile by hand. `07` is an independent upstream VICE bugfix (not
+a revice feature) carried here because the fork base ships it unfixed and the
+VICE project does not take outside patches. Per-file summary:
 
 - **`src/monitor/mon_lex.l`** — a `KMX_VERB` start condition + the `keymatrix`
   and `screenscrape` command tokens.
