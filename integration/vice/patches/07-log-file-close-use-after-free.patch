@@ -1,0 +1,42 @@
+From 79dd54a1da7409b83449f193246e94c34b84714f Mon Sep 17 00:00:00 2001
+From: Josh Bailey <josh@vandervecken.com>
+Date: Sat, 20 Jun 2026 01:11:52 +0000
+Subject: [PATCH] log: flush before close in log_file_close to fix
+ use-after-free
+
+log_file_close() called fclose(log_file) and then fflush(log_file) on the
+same FILE*, reading and writing freed memory. When the log file is not
+stdout (the default log file, or an explicit -logfile target) fclose frees
+the FILE struct and the following fflush touches it, corrupting glibc's
+malloc tcache. The corruption surfaces later as a crash in an unrelated
+malloc - e.g. the fopen() that loads the SID file in try_uncompress_lynx()
+- so vsid segfaults intermittently (heap-layout/ASLR dependent).
+
+Flush while the stream is still open, then close. fclose already flushes,
+so the explicit flush only matters for the stdout case (which is never
+closed).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ src/log.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/log.c b/src/log.c
+index 1bbb89c..aceb5cc 100644
+--- a/src/log.c
++++ b/src/log.c
+@@ -171,10 +171,10 @@ static void log_file_close(void)
+ {
+     DBG(("log_file_close %p\n", log_file));
+     if (log_file) {
++        fflush(log_file);
+         if (log_file != stdout) {
+             fclose(log_file);
+         }
+-        fflush(log_file);
+         log_file = NULL;
+     }
+ }
+-- 
+2.43.0
+
