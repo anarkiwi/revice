@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josh Bailey <josh@vandervecken.com>
+Date: Sat, 21 Jun 2026 09:00:00 +0000
+Subject: [PATCH] log: build nocolor strings before stdout output to fix NULL
+ deref (segfault / heap corruption)
+
+log_helper() only builds the non-colorized copies of the prefix/text
+(nocolorpre / nocolortxt) when (log_to_file || !log_colorize). The stdout
+output branch, however, switches to those non-colorized strings whenever
+the default logger is NOT a terminal (stdout redirected to a pipe/file),
+regardless of those conditions:
+
+    if (archdep_default_logger_is_terminal() == 0) {
+        terminalpre = nocolorpre;   /* may be NULL */
+        terminaltxt = nocolortxt;   /* may be NULL */
+    }
+    log_archdep(terminalpre, terminaltxt);
+
+When log_to_file is off and colorizing is on (the vsiddump.py invocation:
++logtofile +logtostdout, LogColorize defaults to 1) and stdout is a pipe
+(every non-interactive run - CI, the headlessvice dump pipeline), both are
+still NULL. log_archdep() then does strlen(logtxt) on a NULL pointer, which
+reads address 0. Depending on heap/ASLR layout this either segfaults
+immediately or corrupts state and crashes later in an unrelated allocation -
+i.e. a latent, environment-dependent crash that reproduces reliably only on
+some hosts (e.g. the preframr-tokens CI runner). AddressSanitizer pins it
+deterministically:
+
+  SEGV ... strlen ... log_archdep src/log.c:615
+                      log_helper  src/log.c:767
+                      log_printf  src/log.c:903
+
+This was exposed by enabling --enable-cpuhistory (required for the bustrace
+per-access hook) only in the sense that the heap layout changed; the defect
+is pre-existing in stock VICE log.c and independent of cpuhistory.
+
+Fix: lazily build the non-colorized strings in the stdout branch if they
+were not already built, so log_archdep() is never handed a NULL pointer.
+logskipcolors() always returns a non-NULL heap string, and the existing
+lib_free(nocolorpre)/lib_free(nocolortxt) at the end of log_helper() free
+them, so there is no leak.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ src/log.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/log.c b/src/log.c
+index aceb5cc5..8e7fe7ee 100644
+--- a/src/log.c
++++ b/src/log.c
+@@ -760,6 +760,17 @@ static int log_helper(log_t log, unsigned int level, const char *format,
+         /* FIXME: we should force colors off here, if the standard logger goes
+                   into a file (because stdout was redirected) */
+         if (archdep_default_logger_is_terminal() == 0) {
++            /* The non-colorized strings are only built above when log_to_file is
++               set or colorizing is off. When neither holds (e.g. +logtofile with
++               colorizing on) but stdout is not a terminal, they are still NULL
++               here - build them now so log_archdep() never strlen()s a NULL
++               pointer (which segfaults / corrupts the heap). */
++            if (nocolorpre == NULL) {
++                nocolorpre = logskipcolors(pretxt);
++            }
++            if (nocolortxt == NULL) {
++                nocolortxt = logskipcolors(logtxt);
++            }
+             terminalpre = nocolorpre;
+             terminaltxt = nocolortxt;
+         }
+--
+2.43.0
