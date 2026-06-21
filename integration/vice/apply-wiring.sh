@@ -60,9 +60,18 @@ libmonitor_a_SOURCES += \\
 # c64cia1.c (in libc64sc) includes the keymatrix header, so libc64sc needs the
 # keymatrix adapter include dir too — with the header in the submodule it must
 # be reached as "mon_keymatrix.h" (see the c64cia1.c note in README section B).
+#
+# c64 Makefile.am also carries the bus-trace adapter + core: the per-access
+# hook lives in src/c64/vsidcpu.c and the resource/cmdline glue in vsid.c, both
+# in libvsid.a, so the adapter (soundbustrace.c) and the pure core
+# (bustrace_core.c, no deps) compile into libvsid.a too.
 wire_makefile "$VICE_ROOT/src/c64/Makefile.am" "\
-AM_CPPFLAGS += -I$R/screen/include -I$R/screen/vice -I$R/keymatrix/vice
-libc64sc_a_SOURCES += $R/screen/vice/c64screen.c"
+AM_CPPFLAGS += -I$R/screen/include -I$R/screen/vice -I$R/keymatrix/vice \\
+	-I$R/bustrace/include -I$R/bustrace/vice
+libc64sc_a_SOURCES += $R/screen/vice/c64screen.c
+libvsid_a_SOURCES += \\
+	$R/bustrace/src/bustrace_core.c \\
+	$R/bustrace/vice/soundbustrace.c"
 
 # ASID sound device. Unlike the monitor features, the ASID driver is built
 # *conditionally* (it pulls in ALSA) via configure's @SOUND_DRIVERS@ + the

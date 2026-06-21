@@ -36,6 +36,7 @@ include(CTest)
 enable_testing()
 
 add_subdirectory(libs/asid)
+add_subdirectory(libs/bustrace)
 add_subdirectory(libs/keymatrix)
 add_subdirectory(libs/screen)
 add_subdirectory(libs/driveattach)

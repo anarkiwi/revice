@@ -22,6 +22,7 @@ feature shrinks to a thin adapter plus a few unchanged wiring lines.
 | lib | what it is | VICE adapter(s) |
 |---|---|---|
 | `libs/asid` | ASID-over-MIDI protocol codec (SID-register tracking → SysEx update messages, long + short forms) | `vice/soundasid.c` (ALSA transport + `sound_device_t`) |
+| `libs/bustrace` | CPU bus-trace serializer: ingests `{cycle, addr, val, rw, pc}` per 6510 memory access and writes a deterministic, self-validating binary trace (the provenance substrate for generic BACC recovery; replaces the dropped libsidplayfp `sidtrace`) | `vice/soundbustrace.c` (maincpu-bus hook + file I/O, `-bustrace <file>`) |
 | `libs/keymatrix` | C64 keyboard-matrix injection: key tables, arg parsing, the press/tap/observe/release state machine, binmon codecs | `vice/mon_keymatrix.c` |
 | `libs/screen` | `screenscrape`: pack VIC-II state + RAM into the 4072-byte `SCREEN_GET` response; render the 40×25 grid | `vice/mon_screen.c`, `vice/c64screen.c` |
 | `libs/driveattach` | binmon `DRIVE_ATTACH` (0x78) body decoder | (inline in `monitor_binary.c`) |
