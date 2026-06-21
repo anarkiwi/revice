@@ -25,19 +25,27 @@ die() { echo "apply-wiring: error: $*" >&2; exit 1; }
     die "revice submodule not found at src/revice — run: git submodule add <url> src/revice"
 
 # Append a guarded automake fragment to a Makefile.am if not already present.
-# $1 = path to Makefile.am, $2 = fragment body.
+# $1 = path to Makefile.am, $2 = fragment body, $3 = optional marker label so a
+# file can carry more than one independent revice block (default: the shared
+# MARK_BEGIN/MARK_END pair). The label lets bustrace wire into src/c64's
+# Makefile.am even when the screen block is already present.
 wire_makefile() {
-    local mk="$1" body="$2"
-    if grep -qF "$MARK_BEGIN" "$mk"; then
-        echo "  already wired: $mk (skipping)"
+    local mk="$1" body="$2" label="${3:-}"
+    local begin="$MARK_BEGIN" end="$MARK_END"
+    if [ -n "$label" ]; then
+        begin="# >>> revice wiring: $label (managed by apply-wiring.sh) >>>"
+        end="# <<< revice wiring: $label <<<"
+    fi
+    if grep -qF "$begin" "$mk"; then
+        echo "  already wired ($label): $mk (skipping)"
         return
     fi
     {
-        printf '\n%s\n' "$MARK_BEGIN"
+        printf '\n%s\n' "$begin"
         printf '%s\n' "$body"
-        printf '%s\n' "$MARK_END"
+        printf '%s\n' "$end"
     } >> "$mk"
-    echo "  wired: $mk"
+    echo "  wired${label:+ ($label)}: $mk"
 }
 
 R='$(top_srcdir)/src/revice/libs'
@@ -60,18 +68,20 @@ libmonitor_a_SOURCES += \\
 # c64cia1.c (in libc64sc) includes the keymatrix header, so libc64sc needs the
 # keymatrix adapter include dir too — with the header in the submodule it must
 # be reached as "mon_keymatrix.h" (see the c64cia1.c note in README section B).
-#
-# c64 Makefile.am also carries the bus-trace adapter + core: the per-access
-# hook lives in src/c64/vsidcpu.c and the resource/cmdline glue in vsid.c, both
-# in libvsid.a, so the adapter (soundbustrace.c) and the pure core
-# (bustrace_core.c, no deps) compile into libvsid.a too.
 wire_makefile "$VICE_ROOT/src/c64/Makefile.am" "\
-AM_CPPFLAGS += -I$R/screen/include -I$R/screen/vice -I$R/keymatrix/vice \\
-	-I$R/bustrace/include -I$R/bustrace/vice
-libc64sc_a_SOURCES += $R/screen/vice/c64screen.c
+AM_CPPFLAGS += -I$R/screen/include -I$R/screen/vice -I$R/keymatrix/vice
+libc64sc_a_SOURCES += $R/screen/vice/c64screen.c"
+
+# Bus-trace adapter + core (independent block so it wires even when the screen
+# block above is already present). The per-access hook lives in
+# src/c64/vsidcpu.c and the resource/cmdline glue in vsid.c, both in libvsid.a,
+# so the adapter (soundbustrace.c) and the pure core (bustrace_core.c, no deps)
+# compile into libvsid.a too.
+wire_makefile "$VICE_ROOT/src/c64/Makefile.am" "\
+AM_CPPFLAGS += -I$R/bustrace/include -I$R/bustrace/vice
 libvsid_a_SOURCES += \\
 	$R/bustrace/src/bustrace_core.c \\
-	$R/bustrace/vice/soundbustrace.c"
+	$R/bustrace/vice/soundbustrace.c" "bustrace"
 
 # ASID sound device. Unlike the monitor features, the ASID driver is built
 # *conditionally* (it pulls in ALSA) via configure's @SOUND_DRIVERS@ + the
