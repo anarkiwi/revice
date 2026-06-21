@@ -32,6 +32,35 @@ so `c64screen.o`'s reference to `screen_pack` resolves against the later
 | `libs/checkpoint/src/checkpoint_core.c` | `libmonitor` | `src/monitor` |
 | `libs/screen/vice/c64screen.c` | `libc64sc` | `src/c64` |
 | `libs/asid/src/asid_core.c` + `vice/soundasid.c` | sounddrv lib | `src/arch/shared/sounddrv` |
+| `libs/bustrace/src/bustrace_core.c` + `vice/soundbustrace.c` | `libvsid` | `src/c64` |
+
+## Bus-trace feature
+
+The bus-trace (`-bustrace <file>`) records the full 6510 bus during VSID
+playback — every memory access `{cycle, addr, val, rw, pc}` — into a
+deterministic binary trace, the provenance substrate for generic BACC recovery.
+It is **additive and non-perturbing**: with no `-bustrace` file the per-access
+hook is a single null-pointer test and the SID-register dump is byte-identical
+to a build without the feature.
+
+- Core (`bustrace_core.c`) + adapter (`soundbustrace.c`) compile into
+  `libvsid.a` (Makefile.am wiring above).
+- The per-access hook is placed in `src/c64/vsidcpu.c`'s `FEATURE_CPUMEMHISTORY`
+  memmap functions — the one point where VICE already observes every CPU read
+  and write (patch `07-bustrace-vsidcpu-hook.patch`). The trace therefore needs
+  the tree configured with `--enable-cpuhistory`.
+- Resource (`BusTraceFile`), cmdline (`-bustrace`) and shutdown finalize are
+  wired in `src/c64/vsid.c` (patch `08-bustrace-vsid-wiring.patch`).
+
+Usage:
+
+```
+vsid --enable-cpuhistory ... -bustrace tune.bus.bin tune.sid    # trace + (any) dump
+```
+
+Run twice on the same tune and the `.bus.bin` is byte-identical (the trailer
+carries a record count + CRC-32 a reader can verify). See
+`libs/bustrace/include/revice_bustrace.h` for the record format.
 
 ## What changes in the VICE tree
 
