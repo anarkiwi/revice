@@ -56,14 +56,17 @@ wire_makefile "$VICE_ROOT/src/monitor/Makefile.am" "\
 AM_CPPFLAGS += \\
 	-I$R/keymatrix/include   -I$R/keymatrix/vice \\
 	-I$R/screen/include      -I$R/screen/vice \\
-	-I$R/driveattach/include -I$R/checkpoint/include
+	-I$R/driveattach/include -I$R/checkpoint/include \\
+	-I$R/video/include       -I$R/video/vice
 libmonitor_a_SOURCES += \\
 	$R/keymatrix/src/keymatrix_core.c \\
 	$R/keymatrix/vice/mon_keymatrix.c \\
 	$R/screen/src/screen_core.c \\
 	$R/screen/vice/mon_screen.c \\
 	$R/driveattach/src/driveattach_core.c \\
-	$R/checkpoint/src/checkpoint_core.c"
+	$R/checkpoint/src/checkpoint_core.c \\
+	$R/video/src/video_core.c \\
+	$R/video/vice/mon_video.c"
 
 # c64cia1.c (in libc64sc) includes the keymatrix header, so libc64sc needs the
 # keymatrix adapter include dir too — with the header in the submodule it must

@@ -27,6 +27,7 @@ feature shrinks to a thin adapter plus a few unchanged wiring lines.
 | `libs/screen` | `screenscrape`: pack VIC-II state + RAM into the 4072-byte `SCREEN_GET` response; render the 40×25 grid | `vice/mon_screen.c`, `vice/c64screen.c` |
 | `libs/driveattach` | binmon `DRIVE_ATTACH` (0x78) body decoder | (inline in `monitor_binary.c`) |
 | `libs/checkpoint` | silent-checkpoint `CHECKPOINT_SET` body decode (the behavioral change ships as a patch) | (inline in `monitor_binary.c`) |
+| `libs/video` | binmon `VIDEO_RECORD` (0x79): body decode + warp save/restore policy driving VICE's native ZMBV recorder | `vice/mon_video.c` |
 
 Each `libs/<name>` has:
 - `include/revice_<name>.h` — the core API and host-ops vtable,
@@ -190,6 +191,26 @@ same-path re-attach also forces a flush of pending writes.
 | `0x78` | DRIVE_ATTACH | `unit:u8` (8..11), `drive:u8` (0/1), `path_len:u8`, `path:u8 × path_len` | empty |
 
 `path_len == 0` ⇒ detach; otherwise attach the (not NUL-terminated) path.
+
+### `VIDEO_RECORD` — native screen-capture to AVI (binmon only)
+
+Start or stop native VICE video recording of the emulated screen to a
+host-side file, using the in-tree ZMBV gfxoutput driver (lossless ZMBV inside
+an AVI container; depends only on zlib, no external ffmpeg). The standard
+binmon protocol has no way to drive VICE's screenshot/movie recorder, and this
+headless build's text-monitor `screenshot` command only exposes still images.
+
+| Opcode | Name | Body | Response |
+|---|---|---|---|
+| `0x79` | VIDEO_RECORD | `action:u8` (0=stop, 1=start); when starting also `path_len:u8`, `path:u8 × path_len` | empty |
+
+`action == 1` starts recording to the (not NUL-terminated) path — which should
+end in `.avi`; `action == 0` finalizes/closes the file. Recording is driven per
+emulated frame out of the vsync hook, and `screenshot_save_core()` skips
+encoding while warp mode is active, so starting forces warp **OFF** and stopping
+restores the prior warp state — letting a warp-booted harness record a
+normal-speed clip and then resume warping. Starting while already recording, or
+a recorder that refuses to start, is reported as a command failure.
 
 ### silent-checkpoint — byte-granular polled coverage
 

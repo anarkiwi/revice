@@ -30,6 +30,7 @@ so `c64screen.o`'s reference to `screen_pack` resolves against the later
 | `libs/screen/src/screen_core.c` + `vice/mon_screen.c` | `libmonitor` | `src/monitor` |
 | `libs/driveattach/src/driveattach_core.c` | `libmonitor` | `src/monitor` |
 | `libs/checkpoint/src/checkpoint_core.c` | `libmonitor` | `src/monitor` |
+| `libs/video/src/video_core.c` + `vice/mon_video.c` | `libmonitor` | `src/monitor` |
 | `libs/screen/vice/c64screen.c` | `libc64sc` | `src/c64` |
 | `libs/asid/src/asid_core.c` + `vice/soundasid.c` | sounddrv lib | `src/arch/shared/sounddrv` |
 | `libs/bustrace/src/bustrace_core.c` + `vice/soundbustrace.c` | `libvsid` | `src/c64` |
