@@ -20,10 +20,11 @@
 #include "revice_video.h"
 
 /* Binary-monitor entry point for VIDEO_RECORD (0x79). Parses the request body
-   ([action:u8, path_len:u8, path:u8 × path_len]; action 1 = start, 0 = stop)
-   and drives VICE's native ZMBV recorder. Returns 0 on success, or a negative
-   revice video_result code: VIDEO_ERR_LENGTH (-1) for a malformed/short body,
-   VIDEO_ERR_FAILURE (-2) when already recording or the recorder refused start.
+   (action:u8: 0 stop, 1 start ZMBV, 2 start rendered, 3 pause, 4 resume) and
+   drives VICE's native ZMBV recorder or the rendered recorder. Returns 0 on
+   success, or a negative revice video_result code: VIDEO_ERR_LENGTH (-1) for
+   a malformed/short body, VIDEO_ERR_FAILURE (-2) when already recording, the
+   recorder refused start, or pause/resume had no rendered recording.
    See revice_video.h / the fork README for the exact body layout. */
 int mon_video_binmon_record(const unsigned char *body, int length);
 
