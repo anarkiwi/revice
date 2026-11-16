@@ -27,7 +27,7 @@ feature shrinks to a thin adapter plus a few unchanged wiring lines.
 | `libs/screen` | `screenscrape`: pack VIC-II state + RAM into the 4072-byte `SCREEN_GET` response; render the 40×25 grid | `vice/mon_screen.c`, `vice/c64screen.c` |
 | `libs/driveattach` | binmon `DRIVE_ATTACH` (0x78) body decoder | (inline in `monitor_binary.c`) |
 | `libs/checkpoint` | silent-checkpoint `CHECKPOINT_SET` body decode (the behavioral change ships as a patch) | (inline in `monitor_binary.c`) |
-| `libs/video` | binmon `VIDEO_RECORD` (0x79): body decode + warp save/restore policy driving VICE's native ZMBV recorder | `vice/mon_video.c` |
+| `libs/video` | binmon `VIDEO_RECORD` (0x79): body decode, mode/pause state + warp save/restore policy driving VICE's native ZMBV recorder or a rendered (post-filter) H.264 recorder | `vice/mon_video.c` |
 
 Each `libs/<name>` has:
 - `include/revice_<name>.h` — the core API and host-ops vtable,
@@ -192,25 +192,46 @@ same-path re-attach also forces a flush of pending writes.
 
 `path_len == 0` ⇒ detach; otherwise attach the (not NUL-terminated) path.
 
-### `VIDEO_RECORD` — native screen-capture to AVI (binmon only)
+### `VIDEO_RECORD` — native screen-capture (binmon only)
 
-Start or stop native VICE video recording of the emulated screen to a
-host-side file, using the in-tree ZMBV gfxoutput driver (lossless ZMBV inside
-an AVI container; depends only on zlib, no external ffmpeg). The standard
-binmon protocol has no way to drive VICE's screenshot/movie recorder, and this
-headless build's text-monitor `screenshot` command only exposes still images.
+Record the emulated screen to a host-side file in one of two modes. The
+standard binmon protocol has no way to drive VICE's screenshot/movie recorder,
+and this headless build's text-monitor `screenshot` command only exposes still
+images.
 
 | Opcode | Name | Body | Response |
 |---|---|---|---|
-| `0x79` | VIDEO_RECORD | `action:u8` (0=stop, 1=start); when starting also `path_len:u8`, `path:u8 × path_len` | empty |
+| `0x79` | VIDEO_RECORD | `action:u8`, then per action (below) | empty |
 
-`action == 1` starts recording to the (not NUL-terminated) path — which should
-end in `.avi`; `action == 0` finalizes/closes the file. Recording is driven per
-emulated frame out of the vsync hook, and `screenshot_save_core()` skips
-encoding while warp mode is active, so starting forces warp **OFF** and stopping
-restores the prior warp state — letting a warp-booted harness record a
-normal-speed clip and then resume warping. Starting while already recording, or
-a recorder that refuses to start, is reported as a command failure.
+| `action` | Body after `action` | Meaning |
+|---|---|---|
+| `0` stop | — | finalize/close whichever recording is active |
+| `1` start ZMBV | `path_len:u8`, `path:u8 × path_len` | VICE's in-tree ZMBV recorder (lossless ZMBV in AVI) |
+| `2` start rendered | `height:u16` (LE, > 0), `path_len:u8`, `path:u8 × path_len` | every frame after the render filter (CRT emulation), H.264 MP4 via `ffmpeg` |
+| `3` pause | — | rendered recording: stop encoding frames |
+| `4` resume | — | rendered recording: encode frames again |
+
+Paths are not NUL-terminated, 1..255 bytes. Malformed or short bodies, a zero
+height, and unknown actions are reported as invalid length. Starting while
+either mode is recording, a recorder that refuses to start, or pause/resume
+without an active rendered recording is reported as a command failure.
+
+**ZMBV.** `screenshot_save_core()` skips encoding while warp mode is active,
+so starting forces warp **OFF** and stopping restores the prior warp state —
+letting a warp-booted harness record a normal-speed clip and then resume
+warping.
+
+**Rendered.** Each emulated frame is rendered exactly as the GTK3 window
+renders it (`video_canvas_refresh_all()` region through `video_canvas_render()`
+at `canvas_physical_width × canvas_physical_height`, 32-bit `rgb0`) and piped
+to the external `ffmpeg` binary at the machine's refresh rate
+(`cycles_per_second / cycles_per_frame`). ffmpeg scales with lanczos to
+`height` and to the even width nearest
+`physical_width × pixel_aspect × height / physical_height` (pixel aspect per
+the video chip's aspect mode: true, custom or none), and encodes
+`libx264 -crf 18 -pix_fmt yuv420p`. Warp is left unchanged and frames are
+encoded in warp as well; stop closes the pipe and waits for ffmpeg so the file
+is complete when the response arrives.
 
 ### silent-checkpoint — byte-granular polled coverage
 
